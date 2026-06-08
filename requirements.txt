@@ -1,2 +1,3 @@
+psycopg[binary]
 pypdf
 sentence-transformers

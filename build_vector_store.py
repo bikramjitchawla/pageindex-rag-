@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 # Default input/output paths used when no CLI arguments are passed.
-DEFAULT_PDF_PATH = "pdfs/sample_report.pdf"
+DEFAULT_PDF_PATH = "pdfs/openshift-guide-screen.pdf"
 DEFAULT_STORE_PATH = "vector_store.json"
 
 
@@ -64,8 +64,8 @@ def extract_pdf_pages(pdf_path: str) -> list[tuple[int, str]]:
 def chunk_text(
     text: str,
     *,
-    chunk_words: int = 700,
-    overlap_words: int = 120,
+    chunk_words: int = 350,
+    overlap_words: int = 70,
 ) -> list[str]:
     """Split text into overlapping word chunks.
 
@@ -92,7 +92,7 @@ def chunk_text(
     chunks: list[str] = []
 
     # Move forward by the non-overlapping part of the chunk.
-    # For 700 words with 120 overlap, each next chunk starts 580 words later.
+    # For 350 words with 70 overlap, each next chunk starts 280 words later.
     step = chunk_words - overlap_words
     for start in range(0, len(words), step):
         window = words[start : start + chunk_words]
@@ -109,8 +109,8 @@ def chunk_text(
 def build_chunks(
     pdf_path: str,
     *,
-    chunk_words: int = 700,
-    overlap_words: int = 120,
+    chunk_words: int = 350,
+    overlap_words: int = 70,
 ) -> list[Chunk]:
     """Extract PDF pages and convert them into Chunk objects."""
     source = os.path.basename(pdf_path)
@@ -142,13 +142,14 @@ def build_vector_store(
     pdf_path: str,
     *,
     output_path: str = DEFAULT_STORE_PATH,
-    chunk_words: int = 700,
-    overlap_words: int = 120,
+    store: str = "pgvector",
+    chunk_words: int = 350,
+    overlap_words: int = 70,
 ) -> dict:
-    """Extract, chunk, embed, and save a local JSON vector store.
+    """Extract, chunk, embed, and save chunks to the selected vector store.
 
     This is the main pipeline:
-    PDF file -> page text -> chunks -> embeddings -> vector_store.json
+    PDF file -> page text -> chunks -> embeddings -> pgvector or vector_store.json
     """
     pdf = Path(pdf_path)
     if not pdf.exists():
@@ -178,9 +179,8 @@ def build_vector_store(
             f"Embedding count mismatch: got {len(vectors)} vectors for {len(chunks)} chunks"
         )
 
-    # Step 3: Store metadata, text, and embedding vectors together in one JSON file.
-    # This is a small local vector store. It is not Pinecone/Chroma/FAISS/pgvector.
-    store = {
+    # Step 3: Store metadata, text, and embedding vectors.
+    json_store = {
         "source": str(pdf),
         "embedding_model": EMBEDDING_MODEL,
         "chunk_words": chunk_words,
@@ -194,12 +194,29 @@ def build_vector_store(
         ],
     }
 
-    with open(output_path, "w") as f:
-        json.dump(store, f)
+    saved_targets: list[str] = []
+
+    if store in ("json", "both"):
+        with open(output_path, "w") as f:
+            json.dump(json_store, f)
+        saved_targets.append(output_path)
+
+    if store in ("pgvector", "both"):
+        from pg_vector_store import save_chunks_to_pgvector
+
+        row_count = save_chunks_to_pgvector(
+            chunks=chunks,
+            vectors=vectors,
+            source=os.path.basename(str(pdf)),
+            embedding_model=EMBEDDING_MODEL,
+            chunk_words=chunk_words,
+            overlap_words=overlap_words,
+        )
+        saved_targets.append(f"pgvector:{row_count} rows")
 
     # Return a short summary for CLI output or future programmatic use.
     return {
-        "output_path": output_path,
+        "saved_targets": saved_targets,
         "source": str(pdf),
         "chunks": len(chunks),
         "embedding_model": EMBEDDING_MODEL,
@@ -213,24 +230,31 @@ def main() -> None:
     parser.add_argument(
         "--out",
         default=DEFAULT_STORE_PATH,
-        help="Path to write the JSON vector store.",
+        help="Path to write the JSON vector store when --store json or --store both.",
+    )
+    parser.add_argument(
+        "--store",
+        choices=["pgvector", "json", "both"],
+        default="pgvector",
+        help="Where to store embeddings.",
     )
 
     # These two flags control chunk size. Larger chunks carry more context but make
     # retrieval less precise. Smaller chunks are more precise but can lose context.
-    parser.add_argument("--chunk-words", type=int, default=700)
-    parser.add_argument("--overlap-words", type=int, default=120)
+    parser.add_argument("--chunk-words", type=int, default=350)
+    parser.add_argument("--overlap-words", type=int, default=70)
     args = parser.parse_args()
 
     result = build_vector_store(
         args.pdf,
         output_path=args.out,
+        store=args.store,
         chunk_words=args.chunk_words,
         overlap_words=args.overlap_words,
     )
     print(
         f"Saved {result['chunks']} embedded chunks from {result['source']} "
-        f"to {result['output_path']} using {result['embedding_model']}"
+        f"to {', '.join(result['saved_targets'])} using {result['embedding_model']}"
     )
 
 
