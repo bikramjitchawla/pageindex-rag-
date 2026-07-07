@@ -5,7 +5,10 @@ def load_env_file(path: str = ".env") -> None:
     """Load KEY=VALUE pairs from a local .env file into os.environ.
 
     Example .env:
-    EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+    EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+    EMBEDDING_QUERY_PREFIX=Represent this sentence for searching relevant passages:
+    RERANKER_MODEL=BAAI/bge-reranker-base
+    PGVECTOR_DATABASE_URL=
 
     Existing environment variables are not overwritten. That means a value already
     exported in your terminal wins over the value in `.env`.
